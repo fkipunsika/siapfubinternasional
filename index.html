@@ -449,7 +449,7 @@ proyek: {
     window.google = { script: { run: {} } }; 
     
     // WAJIB GANTI URL DI BAWAH INI DENGAN URL DEPLOY APPS SCRIPT ANDA (BERAKHIRAN /exec)
-    const GAS_WEBAPP_URL = 'https://script.google.com/a/macros/fkip.unsika.ac.id/s/AKfycbztTlhRDd0Mbeba0gkEIKenu2X5y5uRgkjaNCJysisBdiqUv2iYbnYWsbAbEreGLkZ2/exec';
+    const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxOnefk2SM2gAFLtc7LLNS4l2bYNQ9xGpZGJHtoAD2-8ETqh6bTDUiqXgj15jTO69Ey/exec';
 
     (function() {
         
@@ -1205,17 +1205,17 @@ function renderDplReport() {
         };
 
         window.handleNilaiSubmit = function(isDraft) {
-            if (!Auth.isVerified()) return;
+            if (!Auth.isVerified() || window._nilaiSaving) return;
             var role = Auth.getRole();
             var mhs = document.getElementById('nilaiMhsUsername').value;
             
             var payload = { mhs: mhs, role: role, data: {}, isDraft: isDraft, draftSelections: {} };
             
-            document.querySelectorAll('.rub-input:checked').forEach(function(inp) {
+            document.querySelectorAll('#accordionRubrics .rub-input:checked').forEach(function(inp) {
                 payload.draftSelections[inp.name] = inp.value;
             });
 
-            var sections = document.querySelectorAll('.rub-section');
+            var sections = document.querySelectorAll('#accordionRubrics .rub-section');
             var isComplete = true;
             
             sections.forEach(function(sec) {
@@ -1244,39 +1244,40 @@ function renderDplReport() {
                 return Swal.fire('Data Belum Lengkap', 'Silakan isi semua indikator sebelum Simpan Final. Jika ingin menyicil, gunakan tombol Simpan Draft.', 'warning');
             }
             
+            if(!Object.keys(payload.draftSelections).length) return Swal.fire('Draft Kosong','Pilih setidaknya satu skor. Nilai lama tidak diubah.','warning');
             payload.draftSelections = JSON.stringify(payload.draftSelections);
 
-            var mhsItem = appData.mhsList.find(function(x){return x.username === mhs});
-            if(mhsItem) mhsItem._isSyncing = true;
-            renderAssessorDashboard();
-            
-            var m = bootstrap.Modal.getInstance(document.getElementById('modalNilai'));
-            if(m) m.hide();
 
-            if (typeof google === 'undefined') {
-                setTimeout(function() {
-                    if(mhsItem) { 
-                        delete mhsItem._isSyncing; 
-                        if(isDraft) mhsItem[role==='DPL'?'dpl_draft':'gp_draft'] = payload.draftSelections;
-                        else mhsItem[role==='DPL'?'dpl_total':'gp_total'] = '85.50'; 
-                    }
-                    renderAssessorDashboard();
-                    Swal.fire({icon:'success', title:isDraft?'Draft Tersimpan':'Tersimpan Final', toast:true, position:'top-end', showConfirmButton:false, timer:1500});
-                }, 1000);
-            } else {
-                gasRun('saveNilai', Auth.getToken(), payload).then(function(res){
-                    if(handleSessionExpired(res)) return;
-                    if(res.success) {
-                        Swal.fire({icon:'success', title:isDraft?'Draft Tersimpan':'Tersimpan Final', toast:true, position:'top-end', showConfirmButton:false, timer:1500});
-                        loadPageData('page-assessor', true);
-                    } else { 
-                        if(mhsItem) delete mhsItem._isSyncing; 
-                        renderAssessorDashboard(); Swal.fire('Error', res.message, 'error'); 
-                    }
-                }).catch(function(err){
-                    if(mhsItem) delete mhsItem._isSyncing; renderAssessorDashboard(); Swal.fire('Error', err.message, 'error');
-                });
-            }
+            if(typeof google==='undefined') return Swal.fire('Tidak Terhubung','Buka aplikasi melalui URL yang terhubung ke server.','error');
+            var mhsItem=appData.mhsList.find(function(x){return String(x.username)===String(mhs);});
+            var modal=document.getElementById('modalNilai');
+            var buttons=Array.from(modal.querySelectorAll('button'));
+            var previous=buttons.map(function(b){return b.disabled;});
+            var preventHide=function(e){e.preventDefault();};
+            modal.addEventListener('hide.bs.modal',preventHide);
+            window._nilaiSaving=true;
+            buttons.forEach(function(b){b.disabled=true;});
+            gasRun('saveNilai',Auth.getToken(),payload).then(function(res){
+                if(handleSessionExpired(res)) return;
+                if(!res.success) throw new Error(res.message || 'Penyimpanan gagal.');
+                if(mhsItem){
+                    mhsItem[role==='DPL'?'dpl_draft':'gp_draft']=res.draftSelections;
+                    mhsItem[role==='DPL'?'dpl_total':'gp_total']=res.total;
+                    Object.assign(mhsItem,res.data);
+                }
+                modal.removeEventListener('hide.bs.modal',preventHide);
+                var instance=bootstrap.Modal.getInstance(modal);
+                if(instance) instance.hide();
+                renderAssessorDashboard();
+                Swal.fire({icon:'success',title:isDraft?'Draft Tersimpan':'Tersimpan Final',toast:true,position:'top-end',showConfirmButton:false,timer:1500});
+                loadPageData('page-assessor',true);
+            }).catch(function(err){
+                Swal.fire('Gagal Menyimpan',err.message+' Pilihan pada formulir tetap tersedia.','error');
+            }).finally(function(){
+                modal.removeEventListener('hide.bs.modal',preventHide);
+                window._nilaiSaving=false;
+                buttons.forEach(function(b,i){b.disabled=previous[i];});
+            });
         };
 
         window.validateNilai = function(mhsUsername) {
